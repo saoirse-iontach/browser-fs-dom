@@ -59,6 +59,6 @@ export function utf16Decode(string: string): Uint8Array {
   const {length, buffer} = data8;
   const sfx = data8[length - 1]; // extra bytes count
 
-  return new Uint8Array(buffer, 0, length - sfx); // performance
-  // return new Uint8Array(buffer.slice(0, length - sfx)); // compatibility
+  // return new Uint8Array(buffer, 0, length - sfx); // performance
+  return new Uint8Array(buffer.slice(0, length - sfx)); // compatibility
 }
