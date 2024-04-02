@@ -7,15 +7,21 @@ const ctxOptions:vm.CreateContextOptions = {
     microtaskMode: 'afterEvaluate'
 }
 const runOptions:vm.RunningScriptOptions = {
-    timeout: 500,
-    microtaskMode: 'afterEvaluate'
+    timeout: 500
 }
 test('browser.min.js', ()=>{
+    const path0 = require.resolve('@browserfs/core/browser.min.js');
+    const src0 = readFileSync(path0, 'utf8');
+
     const path = require.resolve('/../dist/browser.min.js');
     const src = readFileSync(path, 'utf8');
-    const context:any = {TextEncoder, TextDecoder};
+    const context:any = ((o:any)=>o.self=o.window=o)({
+        TextEncoder, TextDecoder,
+        AbortController, AbortSignal
+    });
 
     vm.createContext(context, ctxOptions);
+    vm.runInContext(src0, context, {filename: '@browserfs/core/browser.min.js', ...runOptions});
     vm.runInContext(src, context, {filename: 'browser.min.js', ...runOptions});
     expect(context.BrowserFS_DOM).toBeDefined();
 
