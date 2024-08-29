@@ -8,10 +8,10 @@ import { CreateBackend, type BackendOptions } from '@browserfs/core/backends/bac
 
 declare global {
 	interface FileSystemDirectoryHandle {
-		[Symbol.iterator](): IterableIterator<[string, FileSystemHandle]>;
-		entries(): IterableIterator<[string, FileSystemHandle]>;
-		keys(): IterableIterator<string>;
-		values(): IterableIterator<FileSystemHandle>;
+		[Symbol.asyncIterator](): AsyncIterableIterator<[string, FileSystemHandle]>;
+		entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
+		keys(): AsyncIterableIterator<string>;
+		values(): AsyncIterableIterator<FileSystemHandle>;
 	}
 }
 
@@ -19,12 +19,32 @@ interface FileSystemAccessFileSystemOptions {
 	handle: FileSystemDirectoryHandle;
 }
 
-const handleError = (path = '', error: Error) => {
+const handleError = (path: string = '', error: any) => {
+	if (error instanceof ApiError) {
+		throw error;
+	}
+
 	if (error.name === 'NotFoundError') {
 		throw ApiError.ENOENT(path);
 	}
+	if (error.name === 'TypeError') {
+		throw ApiError.ENOENT(path);
+	}
+	if (error.name === 'NotAllowedError') {
+		throw ApiError.EACCES(path);
+	}
 
-	throw error as ApiError;
+	if (error?.message) {
+		throw new ApiError(ErrorCode.EIO, error.message, path);
+	} else {
+		throw ApiError.FileError(ErrorCode.EIO, path);
+	}
+};
+
+const Array_fromAsync = async <T extends unknown>(asyncIterator: AsyncIterableIterator<T>) => {
+	const array: T[] = [];
+	for await (const value of asyncIterator) array.push(value);
+	return array;
 };
 
 export class FileSystemAccessFile extends PreloadFile<FileSystemAccessFileSystem> {
@@ -59,7 +79,18 @@ export class FileSystemAccessFileSystem extends BaseFileSystem {
 
 	public constructor({ handle }: FileSystemAccessFileSystemOptions) {
 		super();
-		this._handles.set('/', handle);
+
+		this._ready = (async (handle, ready) => {
+			handle = await handle;
+			if (!(handle instanceof FileSystemDirectoryHandle)) throw ApiError.ENOTDIR('/');
+			try {
+				await handle.keys().next();
+			} catch (e) {
+				handleError('/', e);
+			}
+			this._handles.set('/', handle);
+			return ready;
+		})(handle || navigator.storage.getDirectory(), this._ready);
 	}
 
 	public get metadata(): FileSystemMetadata {
@@ -77,95 +108,113 @@ export class FileSystemAccessFileSystem extends BaseFileSystem {
 	}
 
 	public async rename(oldPath: string, newPath: string, cred: Cred): Promise<void> {
+		let path = oldPath;
 		try {
 			const handle = await this.getHandle(oldPath);
+			const parentHandle = await this.getHandle(dirname(oldPath), { parent: true });
 			if (handle instanceof FileSystemDirectoryHandle) {
-				const files = await this.readdir(oldPath, cred);
+				const files = await Array_fromAsync(handle.keys());
 
-				await this.mkdir(newPath, 'wx', cred);
-				if (files.length === 0) {
-					await this.unlink(oldPath, cred);
-				} else {
-					for (const file of files) {
-						await this.rename(join(oldPath, file), join(newPath, file), cred);
-						await this.unlink(oldPath, cred);
-					}
+				await this.getHandle(newPath, { create: 'directory' });
+				for (const file of files) {
+					// recursive
+					await this.rename(join(oldPath, file), join(newPath, file), cred);
+				}
+				if (!parentHandle.isSameEntry(handle)) {
+					await parentHandle.removeEntry(handle.name);
 				}
 			}
 			if (handle instanceof FileSystemFileHandle) {
-				const oldFile = await handle.getFile(),
-					destFolder = await this.getHandle(dirname(newPath));
-				if (destFolder instanceof FileSystemDirectoryHandle) {
-					const newFile = await destFolder.getFileHandle(basename(newPath), { create: true });
-					const writable = await newFile.createWritable();
-					const buffer = await oldFile.arrayBuffer();
-					await writable.write(buffer);
+				const oldFile = await handle.getFile();
+				const buffer = await oldFile.arrayBuffer();
 
-					writable.close();
-					await this.unlink(oldPath, cred);
-				}
+				path = newPath;
+				const newFile = await this.getHandle(newPath, { create: 'file' });
+				const writable = await newFile.createWritable();
+				await writable.write(buffer);
+
+				(path = newPath), writable.close();
+				(path = oldPath), await parentHandle.removeEntry(handle.name);
 			}
-		} catch (err) {
-			handleError(oldPath, err);
+		} catch (e) {
+			handleError(path, e);
 		}
 	}
 
-	public async writeFile(fname: string, data: Uint8Array, flag: FileFlag, mode: number, cred: Cred, createFile?: boolean): Promise<void> {
-		const handle = await this.getHandle(dirname(fname));
-		if (handle instanceof FileSystemDirectoryHandle) {
-			const file = await handle.getFileHandle(basename(fname), { create: true });
+	public async writeFile(fname: string, data: Uint8Array, flag: FileFlag, mode: number, cred: Cred): Promise<void> {
+		try {
+			const file = await this.getHandle(fname, { create: 'file' });
 			const writable = await file.createWritable();
 			await writable.write(data);
 			await writable.close();
-			//return createFile ? this.newFile(fname, flag, data) : undefined;
+		} catch (e) {
+			handleError(fname, e);
 		}
 	}
 
 	public async createFile(p: string, flag: FileFlag, mode: number, cred: Cred): Promise<FileSystemAccessFile> {
-		await this.writeFile(p, new Uint8Array(), flag, mode, cred, true);
+		await this.writeFile(p, new Uint8Array(), flag, mode, cred);
 		return this.openFile(p, flag, cred);
 	}
 
 	public async stat(path: string, cred: Cred): Promise<Stats> {
-		const handle = await this.getHandle(path);
-		if (!handle) {
-			throw ApiError.FileError(ErrorCode.EINVAL, path);
+		try {
+			const handle = await this.getHandle(path);
+			if (handle instanceof FileSystemDirectoryHandle) {
+				return new Stats(FileType.DIRECTORY, 4096);
+			}
+			if (handle instanceof FileSystemFileHandle) {
+				const { lastModified, size } = await handle.getFile();
+				return new Stats(FileType.FILE, size, undefined, undefined, lastModified);
+			}
+		} catch (e) {
+			handleError(path, e);
 		}
-		if (handle instanceof FileSystemDirectoryHandle) {
-			return new Stats(FileType.DIRECTORY, 4096);
-		}
-		if (handle instanceof FileSystemFileHandle) {
-			const { lastModified, size } = await handle.getFile();
-			return new Stats(FileType.FILE, size, undefined, undefined, lastModified);
-		}
+		return undefined as never;
 	}
 
 	public async exists(p: string, cred: Cred): Promise<boolean> {
 		try {
 			await this.getHandle(p);
 			return true;
-		} catch (e) {
+		} catch (e: any) {
+			if (e?.errno !== ErrorCode.ENOENT) throw e;
 			return false;
 		}
 	}
 
 	public async openFile(path: string, flags: FileFlag, cred: Cred): Promise<FileSystemAccessFile> {
-		const handle = await this.getHandle(path);
-		if (handle instanceof FileSystemFileHandle) {
-			const file = await handle.getFile();
-			const buffer = await file.arrayBuffer();
-			return this.newFile(path, flags, buffer, file.size, file.lastModified);
+		try {
+			const handle = await this.getHandle(path);
+			if (handle instanceof FileSystemFileHandle) {
+				const file = await handle.getFile();
+				const buffer = await file.arrayBuffer();
+				return this.newFile(path, flags, buffer, file.size, file.lastModified);
+			} else {
+				throw ApiError.EISDIR(path);
+			}
+		} catch (e) {
+			handleError(path, e);
 		}
+		return undefined as never;
 	}
 
 	public async unlink(path: string, cred: Cred): Promise<void> {
-		const handle = await this.getHandle(dirname(path));
-		if (handle instanceof FileSystemDirectoryHandle) {
-			try {
-				await handle.removeEntry(basename(path), { recursive: true });
-			} catch (e) {
-				handleError(path, e);
+		if (path === '/') {
+			const files = await this.readdir(path, cred);
+			for (const file of files) {
+				await this.unlink('/' + file, cred);
 			}
+			return;
+		}
+		try {
+			const handle = await this.getHandle(path);
+			const parentHandle = await this.getHandle(dirname(path), { parent: true });
+
+			await parentHandle.removeEntry(basename(path), { recursive: true });
+		} catch (e: any) {
+			if (e?.errno === ErrorCode.ENOENT) return;
+			handleError(path, e);
 		}
 	}
 
@@ -173,18 +222,15 @@ export class FileSystemAccessFileSystem extends BaseFileSystem {
 		return this.unlink(path, cred);
 	}
 
-	public async mkdir(p: string, mode: any, cred: Cred): Promise<void> {
-		const overwrite = mode && mode.flag && mode.flag.includes('w') && !mode.flag.includes('x');
-
-		const existingHandle = await this.getHandle(p);
-		if (existingHandle && !overwrite) {
+	public async mkdir(p: string, mode: number, cred: Cred): Promise<void> {
+		try {
+			await this.getHandle(p);
 			throw ApiError.EEXIST(p);
+		} catch (e: any) {
+			if (e?.errno !== ErrorCode.ENOENT) throw e;
 		}
 
-		const handle = await this.getHandle(dirname(p));
-		if (handle instanceof FileSystemDirectoryHandle) {
-			await handle.getDirectoryHandle(basename(p), { create: true });
-		}
+		await this.getHandle(p, { create: 'directory' });
 	}
 
 	public async readdir(path: string, cred: Cred): Promise<string[]> {
@@ -192,55 +238,81 @@ export class FileSystemAccessFileSystem extends BaseFileSystem {
 		if (!(handle instanceof FileSystemDirectoryHandle)) {
 			throw ApiError.ENOTDIR(path);
 		}
-		const _keys: string[] = [];
-		for await (const key of handle.keys()) {
-			_keys.push(join(path, key));
-		}
-		return _keys;
+		return await Array_fromAsync(handle.keys());
 	}
 
 	private newFile(path: string, flag: FileFlag, data: ArrayBuffer, size?: number, lastModified?: number): FileSystemAccessFile {
 		return new FileSystemAccessFile(this, path, flag, new Stats(FileType.FILE, size || 0, undefined, undefined, lastModified || new Date().getTime()), new Uint8Array(data));
 	}
 
-	private async getHandle(path: string): Promise<FileSystemHandle> {
-		if (this._handles.has(path)) {
-			return this._handles.get(path);
-		}
+	private async getHandle(path: string): Promise<FileSystemHandle>;
+	private async getHandle(path: string, opt: { create: 'file' }): Promise<FileSystemFileHandle>;
+	private async getHandle(path: string, opt: { create: 'directory' }): Promise<FileSystemDirectoryHandle>;
+	private async getHandle(path: string, opt: { parent: true }): Promise<FileSystemDirectoryHandle>;
 
-		let walkedPath = '/';
-		const [, ...pathParts] = path.split('/');
-		const getHandleParts = async ([pathPart, ...remainingPathParts]: string[]) => {
-			const walkingPath = join(walkedPath, pathPart);
-			const continueWalk = (handle: FileSystemHandle) => {
-				walkedPath = walkingPath;
-				this._handles.set(walkedPath, handle);
+	private async getHandle(path: string, { create, parent }: any = {}): Promise<FileSystemHandle> {
+		try {
+			const handle = this._handles.get(path);
+			if (handle instanceof FileSystemFileHandle) await handle.getFile();
+			if (handle instanceof FileSystemDirectoryHandle) parent || (await handle.keys().next());
+			if (handle) return handle;
+		} catch (e) {}
 
-				if (remainingPathParts.length === 0) {
-					return this._handles.get(path);
-				}
-
-				getHandleParts(remainingPathParts);
-			};
-			const handle = this._handles.get(walkedPath) as FileSystemDirectoryHandle;
-
+		var walkPath = '';
+		try {
+			var walkPath = dirname(path);
+			let dirHandle = null;
 			try {
-				return await continueWalk(await handle.getDirectoryHandle(pathPart));
-			} catch (error) {
-				if (error.name === 'TypeMismatchError') {
+				const handle = this._handles.get(walkPath);
+				if (handle instanceof FileSystemDirectoryHandle) {
+					walkPath === '/' || (await handle.keys().next());
+					dirHandle = handle;
+				}
+			} catch (e: any) {
+				if (e?.name === 'TypeMismatchError') throw ApiError.ENOTDIR(walkPath);
+			}
+			if (!dirHandle) {
+				const [, ...pathParts] = path.split('/');
+
+				walkPath = '/';
+				dirHandle = this._handles.get('/') as FileSystemDirectoryHandle;
+
+				for (const pathPart of pathParts) {
 					try {
-						return await continueWalk(await handle.getFileHandle(pathPart));
-					} catch (err) {
-						handleError(walkingPath, err);
+						walkPath = join(walkPath, pathPart);
+						dirHandle = await dirHandle.getDirectoryHandle(pathPart);
+						this._handles.set(walkPath, dirHandle);
+					} catch (error: any) {
+						if (error?.name !== 'TypeMismatchError') throw error;
+						this._handles.set(walkPath, await dirHandle.getFileHandle(pathPart));
+						throw ApiError.ENOTDIR(walkPath);
 					}
-				} else if (error.message === 'Name is not allowed.') {
-					throw new ApiError(ErrorCode.ENOENT, error.message, walkingPath);
-				} else {
-					handleError(walkingPath, error);
 				}
 			}
-		};
 
-		await getHandleParts(pathParts);
+			const name = basename(path);
+			var walkPath = path;
+			let handle;
+			try {
+				handle = await dirHandle.getDirectoryHandle(name, { create: create === 'directory' });
+			} catch (e: any) {
+				const mismatch = e?.name === 'TypeMismatchError';
+				const createFile = create && e?.name === 'NotFoundError';
+				if (!(mismatch || createFile)) throw e;
+				handle = await dirHandle.getFileHandle(name, { create: create === 'file' });
+			}
+			this._handles.set(walkPath, handle);
+
+			const expect = parent ? 'directory' : create;
+			if (expect && expect !== handle.kind) {
+				if (parent) throw ApiError.ENOTDIR(walkPath);
+				if (handle.kind === 'directory') throw ApiError.EISDIR(walkPath);
+				/* if (handle.kind === 'file') */ throw ApiError.EEXIST(walkPath);
+			}
+			return handle;
+		} catch (e) {
+			handleError(walkPath, e);
+			return undefined as never;
+		}
 	}
 }
