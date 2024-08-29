@@ -10,6 +10,7 @@ ___
 * [3675f87](/../../commit/3675f872f19791691a394537f3d755eb7b768362) Output tsc build errors
 * [efe5a1b](/../../commit/efe5a1bf310c6f26f7058de9af5e0a5b2aca29d6) Fix prettier format of utf16coder
 * [2807822](/../../commit/280782219219d5ca9dd7c76e2352bc83c4ebfc3c) Simplify release scheme
+* [2112464](/../../commit/2112464cdd1c1478b7d1b2481382eb3d248bbda6) Add change log
 
 ___
 # <a id='v0.0.7'></a> (v0.0.7-iontach) Initial release

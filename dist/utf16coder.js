@@ -2,12 +2,12 @@
  * Contains utility methods for encode/decode binary to string
  */
 /* Convertion between Uint16 and char */
-const itoc = (x) => String.fromCodePoint((x >> 11 !== 27) ? x : x | 0x10000);
-const ctoi = (x) => x.codePointAt(0); // Uint16Array will trunc extra high bit
+const itoc = x => String.fromCodePoint(x >> 11 !== 27 ? x : x | 0x10000);
+const ctoi = x => x.codePointAt(0); // Uint16Array will trunc extra high bit
 /* Tool to encode [Uint8, Uint7] to a char */
-const iitoc = new Int16Array(Int8Array.from([-1, 0]).buffer)[0] < 0 ?
-    (a, b) => String.fromCodePoint((a << 8) | b) : // BigEndian
-    (a, b) => String.fromCharCode(a | (b << 8)); // LittleEndian
+const iitoc = new Int16Array(Int8Array.from([-1, 0]).buffer)[0] < 0
+    ? (a, b) => String.fromCodePoint((a << 8) | b) // BigEndian
+    : (a, b) => String.fromCharCode(a | (b << 8)); // LittleEndian
 /**
  * Encode binary to string
  * @param data8 any binary data
