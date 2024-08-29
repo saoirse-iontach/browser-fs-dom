@@ -27,10 +27,6 @@ ___
 * [Issue 1](https://github.com/saoirse-iontach/browser-fs-dom/pull/2) - Define core imports as externalGlobals
 * [Issue 2](https://github.com/saoirse-iontach/browser-fs-dom/pull/3) - Correct StorageStore encoding of binary to string
 
-## New Contributors
-* @saoirse-iontach
-
-**Full Changelog**: https://github.com/saoirse-iontach/browser-fs-dom/compare/v0.0.6...v0.0.7
 ### New Contributors
 * @saoirse-iontach
 
