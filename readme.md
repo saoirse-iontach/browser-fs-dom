@@ -18,6 +18,32 @@ DOM APIs are *only* available natively in browsers.
 > | **@ZenFS**     | dr-Vortex | 03/2024 - ...     | [npm](//www.npmjs.com/org/zenfs) [github](//github.com/zen-fs) |
 > 
 > <sup>_dr-Vortext_ is an alias of _James P_</sup>
+
+### Versions
+
+<details><summary><i>versions details</i></summary>
+
+**@BrowserFS/fs-dom** and **@ZenFS/dom** share the same repository:
+ - Versions `<=v0.0.6` are **@BrowserFS/fs-dom**
+ - Versions `>=v0.1.3` are **@ZenFS/dom**
+
+Versions `v0.0.6 - v0.2.14` are equivalent; \
+Some fixes, but mainly cosmetics. \
+But Worker and HTTPRequest backends were removed in v0.1.0.
+
+Versions of this **Iontach** fork:
+ | Iontach version | Description |
+ |-|-|
+ | `v0.0.6`         | Original **@BrowserFS** version |
+ | `v0.0.7-iontach` | Inital **Iontach** bugfix | 
+ | `~v0.1.10`       | Newer **Iontach** bugfix |
+ | `semver:0.1`     | Simplified **Iontach** release scheme |
+</details>
+
+Packages `saoirse-iontach/browser-fs-dom#semver:0.1` \
+depends on `saoirse-iontach/browser-fs-core#semver:0.1` \
+which emulate **node:fs** `v14.x.x`.
+
 ### Citing
 
 BrowserFS is a component of the [Doppio](http://doppiojvm.org/) and [Browsix](https://browsix.org/) research projects from the PLASMA lab at the University of Massachusetts Amherst. If you decide to use BrowserFS in a project that leads to a publication, please cite the academic papers on [Doppio](https://dl.acm.org/citation.cfm?doid=2594291.2594293) and [Browsix](https://dl.acm.org/citation.cfm?id=3037727).
